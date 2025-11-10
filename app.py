@@ -520,60 +520,66 @@ def translate():
     }
     Returns JSON with paths to generated .vtt and .mp3 (if created) and detected source language.
     """
-    data = request.get_json()
-    if not data or "filename" not in data or "to" not in data:
-        return jsonify({"error": "filename and to required"}), 400
+    try:
+        data = request.get_json()
+        if not data or "filename" not in data or "to" not in data:
+            return jsonify({"ok": False, "error": "filename and to required"}), 400
 
-    filename = data["filename"]
-    to_lang = data["to"]
-    if to_lang not in SUPPORTED_LANGS:
-        return jsonify({"error": "unsupported target language"}), 400
+        filename = data["filename"]
+        to_lang = data["to"]
+        if to_lang not in SUPPORTED_LANGS:
+            return jsonify({"ok": False, "error": "unsupported target language"}), 400
 
-    video_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    if not os.path.exists(video_path):
-        return jsonify({"error": "video not found"}), 404
+        video_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        if not os.path.exists(video_path):
+            return jsonify({"ok": False, "error": "video not found"}), 404
 
-    # Prepare working files
-    wav_path = os.path.join(app.config["UPLOAD_FOLDER"], f"{filename}.wav")
-    extract_audio(video_path, wav_path)
+        # Prepare working files
+        wav_path = os.path.join(app.config["UPLOAD_FOLDER"], f"{filename}.wav")
+        extract_audio(video_path, wav_path)
 
-    # Transcribe (Whisper)
-    whisper_result = transcribe_with_whisper(wav_path)
-    detected_lang = whisper_result.get("language", "unknown")
-    segments = whisper_result.get("segments", [])
-    normalized = [{"start": s["start"], "end": s["end"], "text": s.get("text", "")} for s in segments]
+        # Transcribe (Whisper)
+        whisper_result = transcribe_with_whisper(wav_path)
+        detected_lang = whisper_result.get("language", "unknown")
+        segments = whisper_result.get("segments", [])
+        normalized = [{"start": s["start"], "end": s["end"], "text": s.get("text", "")} for s in segments]
 
-    # Translate segments
-    translated_segments = translate_segment_texts(normalized, to_lang)
+        # Translate segments
+        translated_segments = translate_segment_texts(normalized, to_lang)
 
-    # Save VTT for the target language
-    vtt_name = f"{filename}.{to_lang}.vtt"
-    vtt_path = os.path.join(app.config["UPLOAD_FOLDER"], vtt_name)
-    segments_to_vtt(translated_segments, vtt_path)
+        # Save VTT for the target language
+        vtt_name = f"{filename}.{to_lang}.vtt"
+        vtt_path = os.path.join(app.config["UPLOAD_FOLDER"], vtt_name)
+        segments_to_vtt(translated_segments, vtt_path)
 
-    # Build aligned TTS on the real timeline and match final length to original audio
-    tts_code = SUPPORTED_LANGS[to_lang]["ttscode"]
-    mp3_name = f"{filename}.{to_lang}.mp3"
-    mp3_path = os.path.join(app.config["UPLOAD_FOLDER"], mp3_name)
+        # Build aligned TTS on the real timeline and match final length to original audio
+        tts_code = SUPPORTED_LANGS[to_lang]["ttscode"]
+        mp3_name = f"{filename}.{to_lang}.mp3"
+        mp3_path = os.path.join(app.config["UPLOAD_FOLDER"], mp3_name)
 
-    # Get original audio total length from the extracted wav
-    orig_audio = AudioSegment.from_wav(wav_path)
-    original_total_ms = len(orig_audio)
+        # Get original audio total length from the extracted wav
+        orig_audio = AudioSegment.from_wav(wav_path)
+        original_total_ms = len(orig_audio)
 
-    tts_out = generate_aligned_tts_audio_timeline(
-        translated_segments, tts_code, mp3_path, original_total_ms
-    )
+        tts_out = generate_aligned_tts_audio_timeline(
+            translated_segments, tts_code, mp3_path, original_total_ms
+        )
 
-    # Return relative URLs so frontend can load them
-    vtt_url = url_for("uploaded_file", filename=vtt_name)
-    mp3_url = url_for("uploaded_file", filename=mp3_name) if tts_out else None
+        # Return relative URLs so frontend can load them
+        vtt_url = url_for("uploaded_file", filename=vtt_name)
+        mp3_url = url_for("uploaded_file", filename=mp3_name) if tts_out else None
 
-    return jsonify({
-        "ok": True,
-        "detected_source_language": detected_lang,
-        "vtt": vtt_url,
-        "mp3": mp3_url
-    })
+        return jsonify({
+            "ok": True,
+            "detected_source_language": detected_lang,
+            "vtt": vtt_url,
+            "mp3": mp3_url
+        })
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print("Translation error:", error_details)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
